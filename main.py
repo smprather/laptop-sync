@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import posixpath
 import shlex
 import subprocess
@@ -13,7 +12,7 @@ from rich.console import Console
 
 console = Console()
 
-DEFAULT_CONFIG = "config.yaml"
+DEFAULT_CONFIG = "laptop_sync.yaml"
 
 
 def load_config(path: str) -> dict:
@@ -21,49 +20,59 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def compute_local_snapshot(source: Path) -> dict[str, str]:
-    """Walk the source directory and return {relative_posix_path: sha256_hex}."""
+def compute_local_snapshot(source: Path) -> dict[str, tuple[float, int]]:
+    """Walk the source directory and return {relative_posix_path: (mtime, size)}."""
     snapshot = {}
     for file_path in sorted(source.rglob("*")):
         if file_path.is_file():
             rel = file_path.relative_to(source).as_posix()
-            h = hashlib.sha256(file_path.read_bytes()).hexdigest()
-            snapshot[rel] = h
+            stat = file_path.stat()
+            snapshot[rel] = (stat.st_mtime, stat.st_size)
     return snapshot
 
 
-def compute_remote_snapshot(host: str, dest: str, ssh_port: int) -> dict[str, str]:
-    """SSH into the remote host and hash all files under dest."""
+def compute_remote_snapshot(host: str, dest: str, ssh_port: int) -> dict[str, tuple[float, int]]:
+    """SSH into the remote host and stat all files under dest.
+
+    Uses find + stat to get modification time (epoch) and size for each file.
+    """
     cmd = [
         "ssh", "-p", str(ssh_port), host,
-        f"find {shlex.quote(dest)} -type f -exec sha256sum {{}} \\;",
+        f"find {shlex.quote(dest)} -type f -exec stat --format='%Y %s %n' {{}} \\;",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        # Remote dir may not exist yet
         return {}
     snapshot = {}
     for line in result.stdout.strip().splitlines():
         if not line:
             continue
-        hash_val, abs_path = line.split(None, 1)
-        # Convert absolute remote path to relative
+        parts = line.split(None, 2)
+        if len(parts) != 3:
+            continue
+        mtime_str, size_str, abs_path = parts
         if abs_path.startswith(dest):
             rel = abs_path[len(dest):].lstrip("/")
         else:
             rel = abs_path
-        snapshot[rel] = hash_val
+        snapshot[rel] = (float(mtime_str), int(size_str))
     return snapshot
 
 
 def compute_diff(
-    local: dict[str, str], remote: dict[str, str]
+    local: dict[str, tuple[float, int]],
+    remote: dict[str, tuple[float, int]],
+    mtime_tolerance: float = 2,
 ) -> tuple[list[str], list[str]]:
-    """Return (files_to_copy, files_to_delete)."""
-    to_copy = [
-        rel for rel, h in local.items()
-        if rel not in remote or remote[rel] != h
-    ]
+    """Return (files_to_copy, files_to_delete) based on mtime and size."""
+    to_copy = []
+    for rel, (l_mtime, l_size) in local.items():
+        if rel not in remote:
+            to_copy.append(rel)
+        else:
+            r_mtime, r_size = remote[rel]
+            if l_size != r_size or abs(l_mtime - r_mtime) > mtime_tolerance:
+                to_copy.append(rel)
     to_delete = [rel for rel in remote if rel not in local]
     return to_copy, to_delete
 
@@ -71,7 +80,7 @@ def compute_diff(
 def copy_files(
     source: Path, host: str, dest: str, ssh_port: int, files: list[str]
 ) -> None:
-    """Create remote directories and scp each changed file."""
+    """Create remote directories and scp each changed file, preserving mtime."""
     if not files:
         return
 
@@ -87,8 +96,9 @@ def copy_files(
         local_path = source / rel
         remote_path = f"{host}:{shlex.quote(posixpath.join(dest, rel))}"
         console.print(f"  [cyan]copying[/cyan] {rel}")
+        # -p flag preserves modification times
         subprocess.run(
-            ["scp", "-P", str(ssh_port), str(local_path), remote_path],
+            ["scp", "-p", "-P", str(ssh_port), str(local_path), remote_path],
             check=True,
         )
 
@@ -100,7 +110,6 @@ def delete_remote_files(
     if not files:
         return
 
-    # Batch deletions in groups to avoid command-line length limits
     batch_size = 100
     for i in range(0, len(files), batch_size):
         batch = files[i : i + batch_size]
@@ -133,6 +142,7 @@ def delete_remote_files(
 @click.option("--dest", default=None, help="Override remote destination directory.")
 @click.option("--interval", default=None, type=int, help="Override poll interval (seconds).")
 @click.option("--ssh-port", default=None, type=int, help="Override SSH port.")
+@click.option("--mtime-tolerance", default=None, type=float, help="Override mtime tolerance (seconds).")
 def mirror(
     config: str,
     source: str | None,
@@ -140,6 +150,7 @@ def mirror(
     dest: str | None,
     interval: int | None,
     ssh_port: int | None,
+    mtime_tolerance: float | None,
 ) -> None:
     """Mirror files from a local directory to a remote Linux host."""
     cfg = load_config(config)
@@ -150,6 +161,7 @@ def mirror(
     remote_dest = dest or cfg["dest"]
     poll_interval = interval if interval is not None else cfg.get("interval", 5)
     port = ssh_port if ssh_port is not None else cfg.get("ssh_port", 22)
+    tolerance = mtime_tolerance if mtime_tolerance is not None else cfg.get("mtime_tolerance", 2)
 
     source_path = Path(source_dir)
     if not source_path.is_dir():
@@ -164,7 +176,7 @@ def mirror(
         check=True,
     )
 
-    previous_local_snapshot: dict[str, str] | None = None
+    previous_local_snapshot: dict[str, tuple[float, int]] | None = None
 
     try:
         while True:
@@ -174,7 +186,7 @@ def mirror(
                 # First iteration: always check consistency with remote
                 console.print("\n[bold]First sync: checking consistency with remote...[/bold]")
                 remote_snapshot = compute_remote_snapshot(remote_host, remote_dest, port)
-                to_copy, to_delete = compute_diff(local_snapshot, remote_snapshot)
+                to_copy, to_delete = compute_diff(local_snapshot, remote_snapshot, tolerance)
             else:
                 if local_snapshot == previous_local_snapshot:
                     time.sleep(poll_interval)
@@ -182,7 +194,7 @@ def mirror(
 
                 console.print("\n[bold yellow]Changes detected, syncing...[/bold yellow]")
                 remote_snapshot = compute_remote_snapshot(remote_host, remote_dest, port)
-                to_copy, to_delete = compute_diff(local_snapshot, remote_snapshot)
+                to_copy, to_delete = compute_diff(local_snapshot, remote_snapshot, tolerance)
 
             if to_copy:
                 console.print(f"[cyan]Copying {len(to_copy)} file(s)[/cyan]")

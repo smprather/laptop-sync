@@ -14,3 +14,7 @@ interval: 5
 
 # SSH port
 ssh_port: 22
+
+# Modification time tolerance in seconds (files with mtime differences
+# within this threshold are considered unchanged)
+mtime_tolerance: 2

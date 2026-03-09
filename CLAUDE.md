@@ -2,22 +2,27 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project
-
-A CLI tool that mirrors files from a Windows source directory (recursive) to a Linux destination directory using `scp` and `ssh`. It polls for changes, only copying files whose contents changed, and deletes destination files removed from the source (true mirror). The first poll iteration always checks for consistency. Assumes passwordless SSH.
-
-## Tech Stack
-
-- Python 3.14, managed with Astral uv
-- rich-click for CLI interface
-- PyYAML for configuration
-
-## Configuration
-
-All settings live in `config.yaml`. CLI flags override config values.
-
 ## Commands
 
-- `uv run main.py` — run with default config.yaml
-- `uv run main.py -c path/to/config.yaml` — run with custom config
+- `uv run main.py` — run the mirror tool (requires `laptop_sync.yaml`)
 - `uv sync` — install/sync dependencies
+
+## Architecture
+
+Single-file CLI tool (`main.py`) using rich-click. See `doc/architecture.md` for requirements and design constraints.
+
+Key flow: poll loop → compute local snapshot (mtime + size) → on first iteration or local changes, fetch remote snapshot via single `ssh stat` call → diff → `scp -p` changed files / `ssh rm` deleted files → sleep.
+
+Config is loaded from YAML (`laptop_sync.yaml` default), with CLI flags as overrides.
+
+## Workflow
+
+- Keep `README.md` in sync with any changes to configuration, CLI options, usage, or behavior.
+
+## Conventions
+
+- Use `scp` for file transfer and `ssh` for remote commands — no rsync, no SFTP
+- Use `shlex.quote()` on all remote paths passed through SSH
+- Batch remote operations (mkdir, rm) into single SSH calls to minimize roundtrips
+- Compare files by mtime + size, never by content hash
+- Preserve modification times on copy (`scp -p`) to prevent update loops
