@@ -1,6 +1,6 @@
 # laptop-sync
 
-A CLI tool that mirrors files from a Windows source directory to a remote Linux host over SSH. It polls for changes and only copies what's needed — a true mirror that also deletes remote files removed from the source.
+A CLI tool that mirrors files between a Windows machine and a remote Linux host over SSH. It supports both **push** (local → remote) and **pull** (remote → local) directions, polls for changes, and only copies what's needed — a true mirror that also deletes files removed from the source side.
 
 ## Requirements
 
@@ -19,9 +19,11 @@ uv sync
 Copy and edit `laptop_sync.yaml`:
 
 ```yaml
+# Push: local directory → remote host (optional)
 source: "C:\\Projects\\myapp"
 host: "user@linuxbox"
 dest: "/home/user/mirror"
+
 interval: 5
 ssh_port: 22
 mtime_tolerance: 2
@@ -31,9 +33,16 @@ excludes:
   - "*.pyc"
   - "node_modules"
   - ".env"
+
+# Pull: remote directories → local (optional)
+pulls:
+  - remote_source: "/home/user/configs"
+    local_dest: "C:\\Users\\me\\configs"
+  - remote_source: "/home/user/scripts"
+    local_dest: "C:\\Users\\me\\scripts"
 ```
 
-All options except `excludes` can be overridden on the command line.
+You can configure push only, pull only, or both in the same config. All options except `excludes` and `pulls` can be overridden on the command line.
 
 ### Exclude patterns
 
@@ -55,7 +64,12 @@ uv run main.py --host user@otherbox --interval 10
 uv run main.py -v
 ```
 
-The tool runs in a loop: it checks for local file changes (by modification time and size), copies changed files via `scp -p` (preserving timestamps), deletes remote files no longer in the source, and sleeps for the configured interval. The first iteration always does a full consistency check against the remote.
+The tool runs in a loop, handling push and pull directions independently each cycle:
+
+- **Push**: checks for local file changes (by mtime and size), copies changed files to the remote via `scp -p` (preserving timestamps), and deletes remote files no longer in the source.
+- **Pull**: checks for remote file changes, copies changed files from the remote to the local destination, and deletes local files no longer on the remote.
+
+The first iteration always does a full consistency check. Local pull destinations can be symlinks to directories.
 
 If the remote host is unreachable (e.g. VPN not yet connected), the tool waits and retries each poll cycle until the host becomes available. SSH connection multiplexing is used on Unix to avoid per-file handshake overhead (auto-disabled on Windows).
 
