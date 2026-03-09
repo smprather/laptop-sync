@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import glob as glob_mod
 import os
 import posixpath
 import shlex
@@ -68,6 +69,62 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def resolve_sources(
+    source_config: str | list[str], base_dest: str,
+) -> list[tuple[Path, str]]:
+    """Resolve source config to list of (local_path, remote_dest).
+
+    Single plain-string source: files go flat into base_dest (backward compat).
+    List or glob matching multiple dirs: each gets a subdirectory under base_dest.
+    """
+    multi_source = isinstance(source_config, list)
+    entries = source_config if multi_source else [source_config]
+    single_plain = not multi_source and not glob_mod.has_magic(entries[0])
+
+    resolved: list[Path] = []
+    for entry in entries:
+        if glob_mod.has_magic(entry):
+            matches = sorted(glob_mod.glob(entry))
+            dirs = [Path(m) for m in matches if Path(m).is_dir()]
+            if not dirs:
+                console.print(
+                    f"[yellow]Warning: glob matched no directories: {entry}[/yellow]"
+                )
+            resolved.extend(dirs)
+        else:
+            p = Path(entry)
+            if not p.is_dir():
+                raise click.BadParameter(
+                    f"Source directory does not exist: {entry}"
+                )
+            resolved.append(p)
+
+    if not resolved:
+        raise click.BadParameter("No source directories found")
+
+    # Single plain string → flat mode (backward compat)
+    if single_plain and len(resolved) == 1:
+        debug(f"Single source (flat mode): {resolved[0]}")
+        return [(resolved[0], base_dest)]
+
+    # Multiple sources → subdirectory per source
+    basenames = [d.name for d in resolved]
+    if len(basenames) != len(set(basenames)):
+        dupes = {n for n in basenames if basenames.count(n) > 1}
+        raise click.BadParameter(
+            f"Multiple source directories share the same name: "
+            f"{', '.join(sorted(dupes))}. "
+            "Rename to avoid destination collisions."
+        )
+
+    result = [(d, posixpath.join(base_dest, d.name)) for d in resolved]
+    debug(
+        f"Multiple sources ({len(result)}): "
+        f"{[str(d) for d, _ in result]}"
+    )
+    return result
+
+
 def check_host_reachable(host: str, port: int) -> bool:
     """Quick SSH connectivity check with short timeout."""
     cmd = ["ssh"] + _ssh_opts(port) + [
@@ -109,14 +166,15 @@ def compute_local_snapshot(
 
         # Prune excluded directories in-place to avoid descending into them
         if excludes:
-            before = len(dirs)
-            dirs[:] = [
-                d for d in dirs
-                if not any(fnmatch.fnmatch(d, pat) for pat in excludes)
-            ]
-            pruned = before - len(dirs)
-            if pruned:
-                excluded_dirs += pruned
+            kept = []
+            for d in dirs:
+                if any(fnmatch.fnmatch(d, pat) for pat in excludes):
+                    excluded_dirs += 1
+                    rel_dir = f"{rel_root}/{d}" if rel_root else d
+                    debug(f"Excluded dir: {rel_dir}")
+                else:
+                    kept.append(d)
+            dirs[:] = kept
         dirs.sort()
 
         for fname in sorted(files):
@@ -126,6 +184,7 @@ def compute_local_snapshot(
                 for pat in excludes
             ):
                 excluded_files += 1
+                debug(f"Excluded file: {rel}")
                 continue
             file_path = Path(root) / fname
             st = file_path.stat()
@@ -283,7 +342,7 @@ def delete_remote_files(
     type=click.Path(exists=True),
     help="Path to YAML config file.",
 )
-@click.option("--source", default=None, help="Override source directory.")
+@click.option("--source", default=None, help="Override source directory (single source only).")
 @click.option("--host", default=None, help="Override remote host.")
 @click.option("--dest", default=None, help="Override remote destination directory.")
 @click.option("--interval", default=None, type=int, help="Override poll interval (seconds).")
@@ -308,7 +367,7 @@ def mirror(
     debug(f"Loaded config from {config}: {cfg}")
 
     # CLI flags override config file values
-    source_dir = source or cfg["source"]
+    source_config: str | list[str] = source or cfg["source"]
     remote_host = host or cfg["host"]
     remote_dest = dest or cfg["dest"]
     poll_interval = interval if interval is not None else cfg.get("interval", 5)
@@ -316,11 +375,21 @@ def mirror(
     tolerance = mtime_tolerance if mtime_tolerance is not None else cfg.get("mtime_tolerance", 2)
     excludes: list[str] = cfg.get("excludes", [])
 
-    source_path = Path(source_dir)
-    if not source_path.is_dir():
-        raise click.BadParameter(f"Source directory does not exist: {source_dir}")
+    # Resolve source config (string, list, or glob) into concrete directories
+    sources = resolve_sources(source_config, remote_dest)
+    multi = len(sources) > 1
 
-    console.print(f"[bold]Mirroring[/bold] {source_dir} -> {remote_host}:{remote_dest}")
+    # Startup output
+    if multi:
+        console.print(
+            f"[bold]Mirroring {len(sources)} sources -> "
+            f"{remote_host}:{remote_dest}[/bold]"
+        )
+        for sp, sd in sources:
+            console.print(f"  {sp} -> {remote_host}:{sd}")
+    else:
+        sp, sd = sources[0]
+        console.print(f"[bold]Mirroring[/bold] {sp} -> {remote_host}:{sd}")
     console.print(f"[dim]Poll interval: {poll_interval}s | SSH port: {port}[/dim]")
     if excludes:
         console.print(f"[dim]Excludes: {', '.join(excludes)}[/dim]")
@@ -329,8 +398,11 @@ def mirror(
         f"ssh_multiplexing={'ON (' + _CONTROL_PATH + ')' if _CAN_MULTIPLEX else 'OFF (Windows)'}"
     )
 
-    remote_dir_ensured = False
-    previous_local_snapshot: dict[str, tuple[float, int]] | None = None
+    # Per-source state
+    previous_snapshots: dict[str, dict[str, tuple[float, int]] | None] = {
+        str(sp): None for sp, _ in sources
+    }
+    remote_dirs_ensured: set[str] = set()
     host_was_reachable = True  # start True so first unreachable message prints
     cycle = 0
 
@@ -352,85 +424,120 @@ def mirror(
                 console.print("[green]Host reachable, resuming.[/green]")
                 host_was_reachable = True
 
-            local_snapshot = compute_local_snapshot(source_path, excludes)
+            for source_path, source_dest in sources:
+                key = str(source_path)
+                label = source_path.name if multi else None
+                if multi:
+                    debug(f"Processing source: {source_path}")
 
-            try:
-                # Ensure remote base directory exists on first successful connection
-                if not remote_dir_ensured:
-                    cmd = [
-                        "ssh", *_ssh_opts(port), remote_host,
-                        f"mkdir -p {shlex.quote(remote_dest)}",
-                    ]
-                    debug(f"Ensuring remote dir: {' '.join(cmd)}")
-                    subprocess.run(cmd, check=True)
-                    remote_dir_ensured = True
+                local_snapshot = compute_local_snapshot(source_path, excludes)
 
-                if previous_local_snapshot is None:
-                    console.print(
-                        "\n[bold]First sync: checking consistency with remote...[/bold]"
-                    )
-                    remote_snapshot = compute_remote_snapshot(
-                        remote_host, remote_dest, port,
-                    )
-                    to_copy, to_delete = compute_diff(
-                        local_snapshot, remote_snapshot, tolerance,
-                    )
-                else:
-                    if local_snapshot == previous_local_snapshot:
-                        debug("No local changes detected, sleeping")
-                        time.sleep(poll_interval)
-                        continue
+                try:
+                    # Ensure remote directory exists on first successful connection
+                    if source_dest not in remote_dirs_ensured:
+                        cmd = [
+                            "ssh", *_ssh_opts(port), remote_host,
+                            f"mkdir -p {shlex.quote(source_dest)}",
+                        ]
+                        debug(f"Ensuring remote dir: {' '.join(cmd)}")
+                        subprocess.run(cmd, check=True)
+                        remote_dirs_ensured.add(source_dest)
 
-                    console.print(
-                        "\n[bold yellow]Changes detected, syncing...[/bold yellow]"
-                    )
-                    # Log what changed locally
-                    if _verbose:
-                        added = set(local_snapshot) - set(previous_local_snapshot)
-                        removed = set(previous_local_snapshot) - set(local_snapshot)
-                        modified = {
-                            k for k in set(local_snapshot) & set(previous_local_snapshot)
-                            if local_snapshot[k] != previous_local_snapshot[k]
-                        }
-                        if added:
-                            debug(f"Local added: {sorted(added)}")
-                        if removed:
-                            debug(f"Local removed: {sorted(removed)}")
-                        if modified:
-                            debug(f"Local modified: {sorted(modified)}")
+                    prev = previous_snapshots[key]
+                    if prev is None:
+                        if label:
+                            console.print(
+                                f"\n[bold]First sync for {label}: "
+                                "checking consistency with remote...[/bold]"
+                            )
+                        else:
+                            console.print(
+                                "\n[bold]First sync: checking consistency "
+                                "with remote...[/bold]"
+                            )
+                        remote_snapshot = compute_remote_snapshot(
+                            remote_host, source_dest, port,
+                        )
+                        to_copy, to_delete = compute_diff(
+                            local_snapshot, remote_snapshot, tolerance,
+                        )
+                    else:
+                        if local_snapshot == prev:
+                            if multi:
+                                debug(f"No changes in {label}")
+                            else:
+                                debug("No local changes detected, sleeping")
+                            continue
 
-                    remote_snapshot = compute_remote_snapshot(
-                        remote_host, remote_dest, port,
-                    )
-                    to_copy, to_delete = compute_diff(
-                        local_snapshot, remote_snapshot, tolerance,
-                    )
+                        if label:
+                            console.print(
+                                f"\n[bold yellow]Changes in {label}, "
+                                "syncing...[/bold yellow]"
+                            )
+                        else:
+                            console.print(
+                                "\n[bold yellow]Changes detected, "
+                                "syncing...[/bold yellow]"
+                            )
+                        # Log what changed locally
+                        if _verbose:
+                            added = set(local_snapshot) - set(prev)
+                            removed = set(prev) - set(local_snapshot)
+                            modified = {
+                                k for k in set(local_snapshot) & set(prev)
+                                if local_snapshot[k] != prev[k]
+                            }
+                            if added:
+                                debug(f"Local added: {sorted(added)}")
+                            if removed:
+                                debug(f"Local removed: {sorted(removed)}")
+                            if modified:
+                                debug(f"Local modified: {sorted(modified)}")
 
-                if to_copy:
-                    console.print(f"[cyan]Copying {len(to_copy)} file(s)[/cyan]")
-                    copy_files(source_path, remote_host, remote_dest, port, to_copy)
+                        remote_snapshot = compute_remote_snapshot(
+                            remote_host, source_dest, port,
+                        )
+                        to_copy, to_delete = compute_diff(
+                            local_snapshot, remote_snapshot, tolerance,
+                        )
 
-                if to_delete:
-                    console.print(f"[red]Deleting {len(to_delete)} file(s)[/red]")
-                    delete_remote_files(remote_host, remote_dest, port, to_delete)
+                    prefix = f"[{label}] " if label else ""
+                    if to_copy:
+                        console.print(
+                            f"[cyan]{prefix}Copying {len(to_copy)} file(s)[/cyan]"
+                        )
+                        copy_files(
+                            source_path, remote_host, source_dest, port,
+                            to_copy,
+                        )
 
-                if not to_copy and not to_delete:
-                    console.print("[green]Already in sync.[/green]")
-                else:
-                    console.print(
-                        f"[green]Synced:[/green] {len(to_copy)} copied, "
-                        f"{len(to_delete)} deleted"
-                    )
-            except subprocess.CalledProcessError as e:
-                console.print(f"[red]Sync error:[/red] {e}")
-                debug(f"CalledProcessError: cmd={e.cmd}, rc={e.returncode}")
-                if e.stderr:
-                    debug(f"stderr: {e.stderr}")
-                console.print("[dim]Will retry next cycle.[/dim]")
-                time.sleep(poll_interval)
-                continue
+                    if to_delete:
+                        console.print(
+                            f"[red]{prefix}Deleting {len(to_delete)} "
+                            "file(s)[/red]"
+                        )
+                        delete_remote_files(
+                            remote_host, source_dest, port, to_delete,
+                        )
 
-            previous_local_snapshot = local_snapshot
+                    if not to_copy and not to_delete:
+                        console.print(f"[green]{prefix}Already in sync.[/green]")
+                    else:
+                        console.print(
+                            f"[green]{prefix}Synced:[/green] "
+                            f"{len(to_copy)} copied, "
+                            f"{len(to_delete)} deleted"
+                        )
+                except subprocess.CalledProcessError as e:
+                    console.print(f"[red]Sync error ({key}):[/red] {e}")
+                    debug(f"CalledProcessError: cmd={e.cmd}, rc={e.returncode}")
+                    if e.stderr:
+                        debug(f"stderr: {e.stderr}")
+                    console.print("[dim]Will retry next cycle.[/dim]")
+                    continue
+
+                previous_snapshots[key] = local_snapshot
+
             time.sleep(poll_interval)
     except KeyboardInterrupt:
         console.print("\n[bold]Stopped.[/bold]")
