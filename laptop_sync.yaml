@@ -1,13 +1,11 @@
 # Mirror tool configuration
 
-# Local Windows source directory to mirror
-source: "C:\\Projects\\myapp"
-
 # Remote Linux host (user@hostname or just hostname)
 host: "user@linuxbox"
 
-# Remote destination directory
-dest: "/home/user/mirror"
+# Push local directory to remote (optional)
+push_source: "C:\\Projects\\myapp"
+push_dest: "/home/user/mirror"
 
 # Default poll interval in seconds (used when push/pull intervals are not set)
 interval: 5
@@ -32,6 +30,6 @@ excludes:
   - "node_modules"
   - ".env"
 
-# Pull a remote directory to local (optional, local_dest can be a symlink to a dir)
+# Pull remote directory to local (optional, pull_dest can be a symlink to a dir)
 # pull_source: "/home/user/configs"
 # pull_dest: "C:\\Users\\me\\configs"

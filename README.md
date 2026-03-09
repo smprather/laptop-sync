@@ -19,10 +19,11 @@ uv sync
 Copy and edit `laptop_sync.yaml`:
 
 ```yaml
-# Push: local directory → remote host (optional)
-source: "C:\\Projects\\myapp"
 host: "user@linuxbox"
-dest: "/home/user/mirror"
+
+# Push: local directory → remote host (optional)
+push_source: "C:\\Projects\\myapp"
+push_dest: "/home/user/mirror"
 
 interval: 5            # default poll interval
 push_interval: 5       # override for push (optional)
@@ -57,7 +58,7 @@ uv run main.py
 uv run main.py -c my_config.yaml
 
 # Override specific options
-uv run main.py --host user@otherbox --interval 10
+uv run main.py --host user@otherbox --push-source /other/path --interval 10
 
 # Different intervals for push and pull
 uv run main.py --push-interval 5 --pull-interval 60

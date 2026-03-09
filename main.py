@@ -360,9 +360,9 @@ def delete_local_files(local_dest: Path, files: list[str]) -> None:
     type=click.Path(exists=True),
     help="Path to YAML config file.",
 )
-@click.option("--source", default=None, help="Override push source directory.")
+@click.option("--push-source", default=None, help="Override push source directory.")
 @click.option("--host", default=None, help="Override remote host.")
-@click.option("--dest", default=None, help="Override push remote destination directory.")
+@click.option("--push-dest", default=None, help="Override push remote destination directory.")
 @click.option("--pull-source", default=None, help="Override pull remote source directory.")
 @click.option("--pull-dest", default=None, help="Override pull local destination directory.")
 @click.option("--interval", default=None, type=int, help="Override default poll interval (seconds).")
@@ -373,9 +373,9 @@ def delete_local_files(local_dest: Path, files: list[str]) -> None:
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Enable debug output.")
 def mirror(
     config: str,
-    source: str | None,
+    push_source: str | None,
     host: str | None,
-    dest: str | None,
+    push_dest: str | None,
     pull_source: str | None,
     pull_dest: str | None,
     interval: int | None,
@@ -402,15 +402,15 @@ def mirror(
     excludes: list[str] = cfg.get("excludes", [])
 
     # Push config (optional)
-    source_dir: str | None = source or cfg.get("source")
-    remote_dest: str | None = dest or cfg.get("dest")
-    do_push = bool(source_dir and remote_dest)
-    source_path: Path | None = None
+    push_source_dir: str | None = push_source or cfg.get("push_source")
+    push_remote_dest: str | None = push_dest or cfg.get("push_dest")
+    do_push = bool(push_source_dir and push_remote_dest)
+    push_source_path: Path | None = None
     if do_push:
-        assert source_dir is not None and remote_dest is not None
-        source_path = Path(source_dir)
-        if not source_path.is_dir():
-            raise click.BadParameter(f"Source directory does not exist: {source_dir}")
+        assert push_source_dir is not None and push_remote_dest is not None
+        push_source_path = Path(push_source_dir)
+        if not push_source_path.is_dir():
+            raise click.BadParameter(f"Push source does not exist: {push_source_dir}")
 
     # Pull config (optional)
     remote_pull_source: str | None = pull_source or cfg.get("pull_source")
@@ -427,14 +427,14 @@ def mirror(
 
     if not do_push and not do_pull:
         raise click.UsageError(
-            "Config must define 'source'+'dest' (push) and/or "
+            "Config must define 'push_source'+'push_dest' (push) and/or "
             "'pull_source'+'pull_dest' (pull)."
         )
 
     # Startup banner
     if do_push:
         console.print(
-            f"[bold]Push:[/bold] {source_dir} -> {remote_host}:{remote_dest}"
+            f"[bold]Push:[/bold] {push_source_dir} -> {remote_host}:{push_remote_dest}"
         )
     if do_pull:
         console.print(
@@ -513,13 +513,13 @@ def mirror(
 
             # --- PUSH ---
             if run_push:
-                assert source_path is not None and remote_dest is not None
-                local_snapshot = compute_local_snapshot(source_path, excludes)
+                assert push_source_path is not None and push_remote_dest is not None
+                local_snapshot = compute_local_snapshot(push_source_path, excludes)
                 try:
                     if not push_dir_ensured:
                         cmd = [
                             "ssh", *_ssh_opts(port), remote_host,
-                            f"mkdir -p {shlex.quote(remote_dest)}",
+                            f"mkdir -p {shlex.quote(push_remote_dest)}",
                         ]
                         debug(f"Ensuring remote dir: {' '.join(cmd)}")
                         subprocess.run(cmd, check=True)
@@ -531,7 +531,7 @@ def mirror(
                             "with remote...[/bold]"
                         )
                         remote_snapshot = compute_remote_snapshot(
-                            remote_host, remote_dest, port, excludes,
+                            remote_host, push_remote_dest, port, excludes,
                         )
                         to_copy, to_delete = compute_diff(
                             local_snapshot, remote_snapshot, tolerance,
@@ -559,7 +559,7 @@ def mirror(
                                 debug(f"Push local modified: {sorted(modified)}")
 
                         remote_snapshot = compute_remote_snapshot(
-                            remote_host, remote_dest, port, excludes,
+                            remote_host, push_remote_dest, port, excludes,
                         )
                         to_copy, to_delete = compute_diff(
                             local_snapshot, remote_snapshot, tolerance,
@@ -570,7 +570,7 @@ def mirror(
                             f"[cyan]Push: copying {len(to_copy)} file(s)[/cyan]"
                         )
                         copy_files(
-                            source_path, remote_host, remote_dest, port,
+                            push_source_path, remote_host, push_remote_dest, port,
                             to_copy,
                         )
                     if to_delete:
@@ -578,7 +578,7 @@ def mirror(
                             f"[red]Push: deleting {len(to_delete)} file(s)[/red]"
                         )
                         delete_remote_files(
-                            remote_host, remote_dest, port, to_delete,
+                            remote_host, push_remote_dest, port, to_delete,
                         )
 
                     if to_copy or to_delete:
