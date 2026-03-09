@@ -1,18 +1,6 @@
 # Mirror tool configuration
 
-# Local source directory/directories to mirror.
-# Can be a single string, a list, or include glob patterns.
-#
-# Single source (files go flat into dest):
-#   source: "C:\\Projects\\myapp"
-#
-# Multiple sources (each gets a subdirectory under dest):
-#   source:
-#     - "C:\\Projects\\app1"
-#     - "C:\\Projects\\app2"
-#
-# Glob pattern (each matched dir gets a subdirectory under dest):
-#   source: "C:\\Projects\\app*"
+# Local Windows source directory to mirror
 source: "C:\\Projects\\myapp"
 
 # Remote Linux host (user@hostname or just hostname)

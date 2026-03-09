@@ -15,9 +15,9 @@ The source system is native Windows 11 (no WSL). The tool runs under native Wind
 
 Single-file CLI tool (`main.py`) using rich-click. See `doc/architecture.md` for requirements and design constraints.
 
-Key flow: resolve sources (string, list, or glob) → poll loop → check host reachability → for each source: compute local snapshot (mtime + size, filtered by excludes) → on first iteration or local changes, fetch remote snapshot via single `ssh find -printf` call → diff → `scp -p` changed files / `ssh rm` deleted files → sleep.
+Key flow: poll loop → check host reachability → compute local snapshot (mtime + size, filtered by excludes) → on first iteration or local changes, fetch remote snapshot via single `ssh find -printf` call → diff → `scp -p` changed files / `ssh rm` deleted files → sleep.
 
-Config is loaded from YAML (`laptop_sync.yaml` default), with CLI flags as overrides. Exclude patterns are YAML-only (no CLI flag). Source can be a single string (flat into dest), a list, or a glob pattern (each resolved dir gets a subdirectory under dest).
+Config is loaded from YAML (`laptop_sync.yaml` default), with CLI flags as overrides. Exclude patterns are YAML-only (no CLI flag).
 
 SSH connection multiplexing (`ControlMaster`) is used on Unix to avoid per-file handshake overhead; on Windows it is automatically disabled since OpenSSH for Windows does not support Unix domain sockets. Host reachability is checked each cycle so the tool survives VPN delays or drops without crashing.
 

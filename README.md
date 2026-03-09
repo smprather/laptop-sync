@@ -33,30 +33,11 @@ excludes:
   - ".env"
 ```
 
-All options except `excludes` and `source` (when using a list/glob) can be overridden on the command line.
-
-### Multiple sources
-
-The `source` key accepts a single string, a list of strings, or glob patterns:
-
-```yaml
-# Single source — files go flat into dest (backward compatible)
-source: "C:\\Projects\\myapp"
-
-# Multiple sources — each gets a subdirectory under dest
-source:
-  - "C:\\Projects\\app1"
-  - "C:\\Projects\\app2"
-
-# Glob pattern — each matched directory gets a subdirectory under dest
-source: "C:\\Projects\\app*"
-```
-
-When multiple sources resolve, each source directory gets its own subdirectory under `dest` named after the directory (e.g., `app1/`, `app2/`). Source directory basenames must be unique.
+All options except `excludes` can be overridden on the command line.
 
 ### Exclude patterns
 
-The `excludes` list uses [fnmatch](https://docs.python.org/3/library/fnmatch.html) syntax. Patterns are matched against both filenames and relative paths, and excluded directories are not descended into (so excluding `.git` skips the entire tree). Excludes apply globally to all sources.
+The `excludes` list uses [fnmatch](https://docs.python.org/3/library/fnmatch.html) syntax. Patterns are matched against both filenames and relative paths, and excluded directories are not descended into (so excluding `.git` skips the entire tree).
 
 ## Usage
 
