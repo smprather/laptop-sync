@@ -24,7 +24,9 @@ source: "C:\\Projects\\myapp"
 host: "user@linuxbox"
 dest: "/home/user/mirror"
 
-interval: 5
+interval: 5            # default poll interval
+push_interval: 5       # override for push (optional)
+pull_interval: 30      # override for pull (optional)
 ssh_port: 22
 mtime_tolerance: 2
 excludes:
@@ -60,11 +62,16 @@ uv run main.py -c my_config.yaml
 # Override specific options
 uv run main.py --host user@otherbox --interval 10
 
+# Different intervals for push and pull
+uv run main.py --push-interval 5 --pull-interval 60
+
 # Enable verbose/debug output
 uv run main.py -v
 ```
 
-The tool runs in a loop, handling push and pull directions independently each cycle:
+Push and pull can run on different intervals (e.g. push every 5s, pull every 60s). If `push_interval` or `pull_interval` are not set, they default to `interval`.
+
+The tool runs in a loop, handling push and pull directions on independent schedules:
 
 - **Push**: checks for local file changes (by mtime and size), copies changed files to the remote via `scp -p` (preserving timestamps), and deletes remote files no longer in the source.
 - **Pull**: checks for remote file changes, copies changed files from the remote to the local destination, and deletes local files no longer on the remote.
