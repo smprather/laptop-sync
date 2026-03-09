@@ -11,9 +11,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Single-file CLI tool (`main.py`) using rich-click. See `doc/architecture.md` for requirements and design constraints.
 
-Key flow: poll loop → compute local snapshot (mtime + size) → on first iteration or local changes, fetch remote snapshot via single `ssh stat` call → diff → `scp -p` changed files / `ssh rm` deleted files → sleep.
+Key flow: poll loop → check host reachability → compute local snapshot (mtime + size, filtered by excludes) → on first iteration or local changes, fetch remote snapshot via single `ssh find -printf` call → diff → `scp -p` changed files / `ssh rm` deleted files → sleep.
 
-Config is loaded from YAML (`laptop_sync.yaml` default), with CLI flags as overrides.
+Config is loaded from YAML (`laptop_sync.yaml` default), with CLI flags as overrides. Exclude patterns are YAML-only (no CLI flag).
+
+SSH connection multiplexing (`ControlMaster`) is used across all ssh/scp calls to avoid per-file handshake overhead. Host reachability is checked each cycle so the tool survives VPN delays or drops without crashing.
 
 ## Workflow
 
@@ -24,5 +26,8 @@ Config is loaded from YAML (`laptop_sync.yaml` default), with CLI flags as overr
 - Use `scp` for file transfer and `ssh` for remote commands — no rsync, no SFTP
 - Use `shlex.quote()` on all remote paths passed through SSH
 - Batch remote operations (mkdir, rm) into single SSH calls to minimize roundtrips
+- Use SSH connection multiplexing (`ControlMaster`/`ControlPersist`) on all ssh/scp calls
+- Check host reachability before each poll cycle; skip gracefully if unreachable
+- Catch `CalledProcessError` inside the loop to survive transient SSH failures
 - Compare files by mtime + size, never by content hash
 - Preserve modification times on copy (`scp -p`) to prevent update loops

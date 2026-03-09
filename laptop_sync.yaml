@@ -18,3 +18,12 @@ ssh_port: 22
 # Modification time tolerance in seconds (files with mtime differences
 # within this threshold are considered unchanged)
 mtime_tolerance: 2
+
+# File/directory patterns to exclude from sync (fnmatch syntax)
+# Patterns are matched against both filenames and relative paths
+excludes:
+  - ".git"
+  - "__pycache__"
+  - "*.pyc"
+  - "node_modules"
+  - ".env"
