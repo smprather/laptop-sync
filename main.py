@@ -253,14 +253,16 @@ def copy_files(
     if not files:
         return
 
-    # Batch-create all needed remote directories in one SSH call
-    dirs = {posixpath.dirname(f) for f in files if posixpath.dirname(f)}
-    if dirs:
+    # Batch-create all needed remote directories in batched SSH calls
+    dirs = sorted({posixpath.dirname(f) for f in files if posixpath.dirname(f)})
+    batch_size = 100
+    for i in range(0, len(dirs), batch_size):
+        batch = dirs[i : i + batch_size]
         mkdir_cmd = " && ".join(
-            f"mkdir -p {shlex.quote(posixpath.join(dest, d))}" for d in sorted(dirs)
+            f"mkdir -p {shlex.quote(posixpath.join(dest, d))}" for d in batch
         )
         cmd = ["ssh", *_ssh_opts(port), host, mkdir_cmd]
-        debug(f"Creating {len(dirs)} remote dirs: {' '.join(cmd)}")
+        debug(f"Creating dirs batch {i // batch_size + 1}: {' '.join(cmd)}")
         subprocess.run(cmd, check=True)
 
     for rel in files:
