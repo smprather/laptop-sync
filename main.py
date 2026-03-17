@@ -392,6 +392,7 @@ def delete_local_files(local_dest: Path, files: list[str]) -> None:
 @click.option("--pull-interval", default=None, type=int, help="Override pull poll interval (seconds).")
 @click.option("--ssh-port", default=None, type=int, help="Override SSH port.")
 @click.option("--mtime-tolerance", default=None, type=float, help="Override mtime tolerance (seconds).")
+@click.option("--once", is_flag=True, default=False, help="Run one sync cycle and exit.")
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Enable debug output.")
 def mirror(
     config: str,
@@ -407,6 +408,7 @@ def mirror(
     pull_interval: int | None,
     ssh_port: int | None,
     mtime_tolerance: float | None,
+    once: bool,
     verbose: bool,
 ) -> None:
     """Mirror files between a local directory and a remote Linux host."""
@@ -480,6 +482,8 @@ def mirror(
         console.print(f"[dim]Poll intervals: {', '.join(parts)} | SSH port: {port}[/dim]")
     if excludes:
         console.print(f"[dim]Excludes: {', '.join(excludes)}[/dim]")
+    if once:
+        console.print("[dim]Mode: once[/dim]")
     debug(
         f"mtime_tolerance={tolerance}s, "
         f"ssh_multiplexing={'ON (' + _CONTROL_PATH + ')' if _CAN_MULTIPLEX else 'OFF (Windows)'}"
@@ -534,6 +538,8 @@ def mirror(
                     next_push_at = now + retry_interval
                 if run_pull:
                     next_pull_at = now + retry_interval
+                if once:
+                    raise click.ClickException("Host unreachable during --once run.")
                 continue
 
             if not host_was_reachable:
@@ -684,6 +690,9 @@ def mirror(
                     if e.stderr:
                         debug(f"stderr: {e.stderr}")
                 next_pull_at = time.monotonic() + pull_ivl
+
+            if once:
+                break
     except KeyboardInterrupt:
         console.print("\n[bold]Stopped.[/bold]")
 

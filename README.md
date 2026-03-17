@@ -67,6 +67,9 @@ uv run main.py --host user@otherbox --push-source /other/path --interval 10
 # Disable pull for a run without editing YAML
 uv run main.py --no-pull-enable
 
+# Run a single sync cycle and exit
+uv run main.py --once
+
 # Different intervals for push and pull
 uv run main.py --push-interval 5 --pull-interval 60
 
@@ -76,7 +79,7 @@ uv run main.py -v
 
 Push and pull can run on different intervals (e.g. push every 5s, pull every 60s). If `push_interval` or `pull_interval` are not set, they default to `interval`.
 
-The tool runs in a loop, handling push and pull directions on independent schedules:
+By default the tool runs in a loop, handling push and pull directions on independent schedules. With `--once`, it runs a single sync cycle for the enabled directions and exits.
 
 - **Push**: checks for local file changes (by mtime and size), copies changed files to the remote via `scp -p` (preserving timestamps), and deletes remote files no longer in the source.
 - **Pull**: checks for remote file changes, copies changed files from the remote to the local destination, and deletes local files no longer on the remote.
