@@ -65,7 +65,17 @@ def _scp_remote_path(host: str, path: str) -> str:
 
 def load_config(path: str) -> dict:
     with open(path) as f:
-        return yaml.safe_load(f)
+        return yaml.safe_load(f) or {}
+
+
+def _get_config_bool(cfg: dict, key: str) -> bool:
+    """Return a required boolean config value."""
+    if key not in cfg:
+        raise click.UsageError(f"Config must define '{key}' as true or false.")
+    value = cfg[key]
+    if isinstance(value, bool):
+        return value
+    raise click.BadParameter(f"Config '{key}' must be true or false.")
 
 
 def check_host_reachable(host: str, port: int) -> bool:
@@ -365,8 +375,18 @@ def delete_local_files(local_dest: Path, files: list[str]) -> None:
 @click.option("--push-source", default=None, help="Override push source directory.")
 @click.option("--host", default=None, help="Override remote host.")
 @click.option("--push-dest", default=None, help="Override push remote destination directory.")
+@click.option(
+    "--push-enable/--no-push-enable",
+    default=None,
+    help="Explicitly enable or disable push sync.",
+)
 @click.option("--pull-source", default=None, help="Override pull remote source directory.")
 @click.option("--pull-dest", default=None, help="Override pull local destination directory.")
+@click.option(
+    "--pull-enable/--no-pull-enable",
+    default=None,
+    help="Explicitly enable or disable pull sync.",
+)
 @click.option("--interval", default=None, type=int, help="Override default poll interval (seconds).")
 @click.option("--push-interval", default=None, type=int, help="Override push poll interval (seconds).")
 @click.option("--pull-interval", default=None, type=int, help="Override pull poll interval (seconds).")
@@ -378,8 +398,10 @@ def mirror(
     push_source: str | None,
     host: str | None,
     push_dest: str | None,
+    push_enable: bool | None,
     pull_source: str | None,
     pull_dest: str | None,
+    pull_enable: bool | None,
     interval: int | None,
     push_interval: int | None,
     pull_interval: int | None,
@@ -406,10 +428,13 @@ def mirror(
     # Push config (optional)
     push_source_dir: str | None = push_source or cfg.get("push_source")
     push_remote_dest: str | None = push_dest or cfg.get("push_dest")
-    do_push = bool(push_source_dir and push_remote_dest)
+    do_push = push_enable if push_enable is not None else _get_config_bool(cfg, "push_enable")
     push_source_path: Path | None = None
     if do_push:
-        assert push_source_dir is not None and push_remote_dest is not None
+        if not push_source_dir or not push_remote_dest:
+            raise click.UsageError(
+                "Push is enabled but 'push_source' and 'push_dest' are not both configured."
+            )
         push_source_path = Path(push_source_dir)
         if not push_source_path.is_dir():
             raise click.BadParameter(f"Push source does not exist: {push_source_dir}")
@@ -417,10 +442,13 @@ def mirror(
     # Pull config (optional)
     remote_pull_source: str | None = pull_source or cfg.get("pull_source")
     local_pull_dest: str | None = pull_dest or cfg.get("pull_dest")
-    do_pull = bool(remote_pull_source and local_pull_dest)
+    do_pull = pull_enable if pull_enable is not None else _get_config_bool(cfg, "pull_enable")
     pull_dest_path: Path | None = None
     if do_pull:
-        assert remote_pull_source is not None and local_pull_dest is not None
+        if not remote_pull_source or not local_pull_dest:
+            raise click.UsageError(
+                "Pull is enabled but 'pull_source' and 'pull_dest' are not both configured."
+            )
         pull_dest_path = Path(local_pull_dest)
         if not pull_dest_path.is_dir():
             raise click.BadParameter(
@@ -429,8 +457,7 @@ def mirror(
 
     if not do_push and not do_pull:
         raise click.UsageError(
-            "Config must define 'push_source'+'push_dest' (push) and/or "
-            "'pull_source'+'pull_dest' (pull)."
+            "Nothing is enabled. Set 'push_enable' and/or 'pull_enable' to true."
         )
 
     # Startup banner

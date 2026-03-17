@@ -3,7 +3,11 @@
 # Remote Linux host (user@hostname or just hostname)
 host: "user@linuxbox"
 
-# Push local directory to remote (optional)
+# Explicitly enable each sync direction
+push_enable: true
+pull_enable: true
+
+# Push local directory to remote
 push_source: "C:\\Projects\\myapp"
 push_dest: "/home/user/mirror"
 
@@ -30,6 +34,6 @@ excludes:
   - "node_modules"
   - ".env"
 
-# Pull remote directory to local (optional, pull_dest can be a symlink to a dir)
-# pull_source: "/home/user/configs"
-# pull_dest: "C:\\Users\\me\\configs"
+# Pull remote directory to local (pull_dest can be a symlink to a dir)
+pull_source: "/home/user/configs"
+pull_dest: "C:\\Users\\me\\configs"

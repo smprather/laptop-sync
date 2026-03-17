@@ -21,7 +21,11 @@ Copy and edit `laptop_sync.yaml`:
 ```yaml
 host: "user@linuxbox"
 
-# Push: local directory → remote host (optional)
+# Explicitly enable each sync direction
+push_enable: true
+pull_enable: true
+
+# Push: local directory → remote host
 push_source: "C:\\Projects\\myapp"
 push_dest: "/home/user/mirror"
 
@@ -37,12 +41,12 @@ excludes:
   - "node_modules"
   - ".env"
 
-# Pull: remote directory → local (optional, pull_dest can be a symlink)
+# Pull: remote directory → local (pull_dest can be a symlink)
 pull_source: "/home/user/configs"
 pull_dest: "C:\\Users\\me\\configs"
 ```
 
-You can configure push only, pull only, or both in the same config. All options except `excludes` can be overridden on the command line.
+You can configure push only, pull only, or both in the same config by setting `push_enable` and `pull_enable`. When a direction is enabled, both of its path settings must also be present. All options except `excludes` can be overridden on the command line.
 
 ### Exclude patterns
 
@@ -59,6 +63,9 @@ uv run main.py -c my_config.yaml
 
 # Override specific options
 uv run main.py --host user@otherbox --push-source /other/path --interval 10
+
+# Disable pull for a run without editing YAML
+uv run main.py --no-pull-enable
 
 # Different intervals for push and pull
 uv run main.py --push-interval 5 --pull-interval 60
