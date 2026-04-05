@@ -697,5 +697,9 @@ def mirror(
         console.print("\n[bold]Stopped.[/bold]")
 
 
-if __name__ == "__main__":
+def main() -> None:
     mirror()
+
+
+if __name__ == "__main__":
+    main()
