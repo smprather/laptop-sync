@@ -10,8 +10,25 @@ A CLI tool that mirrors files between a Windows machine and a remote Linux host 
 
 ## Install
 
+**From GitHub (recommended):**
+```bash
+uv tool install git+https://github.com/<owner>/laptop-sync.git
+```
+
+Or from a specific branch/tag:
+```bash
+uv tool install git+https://github.com/<owner>/laptop-sync.git@main
+```
+
+**From a local repo clone:**
+```bash
+uv tool install .
+```
+
+**For development (install dependencies and run directly):**
 ```bash
 uv sync
+uv run main.py
 ```
 
 ## Configuration
