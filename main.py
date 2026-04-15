@@ -101,6 +101,9 @@ def check_host_reachable(host: str, port: int) -> bool:
     except subprocess.TimeoutExpired:
         debug("Reachability check timed out")
         return False
+    except OSError as exc:
+        debug(f"Reachability check OSError: {exc}")
+        return False
 
 
 def compute_local_snapshot(
