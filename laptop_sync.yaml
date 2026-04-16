@@ -25,6 +25,9 @@ ssh_port: 22
 # within this threshold are considered unchanged)
 mtime_tolerance: 2
 
+# Set to true to copy new/changed files only — never delete from the destination
+# no_delete: false
+
 # File/directory patterns to exclude from sync (fnmatch syntax)
 # Patterns are matched against both filenames and relative paths
 excludes:

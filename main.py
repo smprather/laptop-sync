@@ -396,6 +396,12 @@ def delete_local_files(local_dest: Path, files: list[str]) -> None:
 @click.option("--ssh-port", default=None, type=int, help="Override SSH port.")
 @click.option("--mtime-tolerance", default=None, type=float, help="Override mtime tolerance (seconds).")
 @click.option("--once", is_flag=True, default=False, help="Run one sync cycle and exit.")
+@click.option(
+    "--no-delete",
+    is_flag=True,
+    default=False,
+    help="Copy new/changed files but never delete files from the destination.",
+)
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Enable debug output.")
 def mirror(
     config: str,
@@ -412,6 +418,7 @@ def mirror(
     ssh_port: int | None,
     mtime_tolerance: float | None,
     once: bool,
+    no_delete: bool,
     verbose: bool,
 ) -> None:
     """Mirror files between a local directory and a remote Linux host."""
@@ -429,6 +436,7 @@ def mirror(
     port = ssh_port if ssh_port is not None else cfg.get("ssh_port", 22)
     tolerance = mtime_tolerance if mtime_tolerance is not None else cfg.get("mtime_tolerance", 2)
     excludes: list[str] = cfg.get("excludes", [])
+    no_delete = no_delete or bool(cfg.get("no_delete", False))
 
     # Push config (optional)
     push_source_dir: str | None = push_source or cfg.get("push_source")
@@ -485,6 +493,8 @@ def mirror(
         console.print(f"[dim]Poll intervals: {', '.join(parts)} | SSH port: {port}[/dim]")
     if excludes:
         console.print(f"[dim]Excludes: {', '.join(excludes)}[/dim]")
+    if no_delete:
+        console.print("[dim]Mode: no-delete (destination files are never removed)[/dim]")
     if once:
         console.print("[dim]Mode: once[/dim]")
     debug(
@@ -611,18 +621,20 @@ def mirror(
                             push_source_path, remote_host, push_remote_dest, port,
                             to_copy,
                         )
-                    if to_delete:
+                    if to_delete and not no_delete:
                         console.print(
                             f"[red]Push: deleting {len(to_delete)} file(s)[/red]"
                         )
                         delete_remote_files(
                             remote_host, push_remote_dest, port, to_delete,
                         )
+                    elif to_delete and no_delete:
+                        debug(f"Push: skipping delete of {len(to_delete)} file(s) (no-delete mode)")
 
-                    if to_copy or to_delete:
+                    if to_copy or (to_delete and not no_delete):
                         console.print(
                             f"[green]Push synced:[/green] {len(to_copy)} copied, "
-                            f"{len(to_delete)} deleted"
+                            f"{len(to_delete) if not no_delete else 0} deleted"
                         )
                     elif previous_push_snapshot is None:
                         console.print("[green]Push: already in sync.[/green]")
@@ -672,16 +684,18 @@ def mirror(
                                 remote_host, remote_pull_source, port,
                                 pull_dest_path, to_copy,
                             )
-                        if to_delete:
+                        if to_delete and not no_delete:
                             console.print(
                                 f"[red]Pull: deleting {len(to_delete)} file(s)[/red]"
                             )
                             delete_local_files(pull_dest_path, to_delete)
+                        elif to_delete and no_delete:
+                            debug(f"Pull: skipping delete of {len(to_delete)} file(s) (no-delete mode)")
 
-                        if to_copy or to_delete:
+                        if to_copy or (to_delete and not no_delete):
                             console.print(
                                 f"[green]Pull synced:[/green] "
-                                f"{len(to_copy)} pulled, {len(to_delete)} deleted"
+                                f"{len(to_copy)} pulled, {len(to_delete) if not no_delete else 0} deleted"
                             )
                         elif previous_pull_snapshot is None:
                             console.print("[green]Pull: already in sync.[/green]")

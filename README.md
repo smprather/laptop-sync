@@ -1,6 +1,6 @@
 # laptop-sync
 
-A CLI tool that mirrors files between a Windows machine and a remote Linux host over SSH. It supports both **push** (local → remote) and **pull** (remote → local) directions, polls for changes, and only copies what's needed — a true mirror that also deletes files removed from the source side.
+A CLI tool that mirrors files between a Windows machine and a remote Linux host over SSH. It supports both **push** (local → remote) and **pull** (remote → local) directions, polls for changes, and only copies what's needed. By default it is a true mirror that also deletes files removed from the source side; use `--no-delete` to copy only (never remove files from the destination).
 
 ## Requirements
 
@@ -51,6 +51,7 @@ push_interval: 5       # override for push (optional)
 pull_interval: 30      # override for pull (optional)
 ssh_port: 22
 mtime_tolerance: 2
+# no_delete: false     # set to true to never delete files from the destination
 excludes:
   - ".git"
   - "__pycache__"
@@ -92,6 +93,9 @@ uv run main.py --push-interval 5 --pull-interval 60
 
 # Enable verbose/debug output
 uv run main.py -v
+
+# Copy new/changed files only, never delete from destination
+uv run main.py --no-delete
 ```
 
 Push and pull can run on different intervals (e.g. push every 5s, pull every 60s). If `push_interval` or `pull_interval` are not set, they default to `interval`.
@@ -100,6 +104,8 @@ By default the tool runs in a loop, handling push and pull directions on indepen
 
 - **Push**: checks for local file changes (by mtime and size), copies changed files to the remote via `scp -p` (preserving timestamps), and deletes remote files no longer in the source.
 - **Pull**: checks for remote file changes, copies changed files from the remote to the local destination, and deletes local files no longer on the remote.
+
+Use `--no-delete` (or `no_delete: true` in the config) to disable deletions entirely — files are copied to the destination but never removed from it. This applies to both push and pull.
 
 The first iteration always does a full consistency check. Local pull destinations can be symlinks to directories.
 
