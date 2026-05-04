@@ -25,10 +25,12 @@ SSH connection multiplexing (`ControlMaster`) is used on Unix to avoid per-file 
 
 ## Workflow
 
+- **Before every commit:** update `AGENTS.md` if `main.py`, `README.md`, `laptop_sync.yaml`, `pyproject.toml`, or `doc/` changed. `AGENTS.md` is the agent cold-start reference and must stay current.
 - Keep `README.md` in sync with any changes to configuration, CLI options, usage, or behavior.
 
 ## Conventions
 
+- **rsync is DPI-blocked** in the target work environment — SCP passes but rsync's protocol signature is flagged. This tool emulates rsync's reconciliation logic (snapshot → diff → copy/delete) using only `ssh` and `scp`. Never introduce rsync.
 - Use `scp` for file transfer and `ssh` for remote commands — no rsync, no SFTP
 - Use `shlex.quote()` on all remote paths passed through SSH
 - Batch remote operations (mkdir, rm) into single SSH calls to minimize roundtrips

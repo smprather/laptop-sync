@@ -1,0 +1,30 @@
+#!/bin/sh
+# Pre-commit hook: warn if source files changed but AGENTS.md was not updated.
+#
+# Install: copy to .git/hooks/pre-commit (or run: cp .hooks/pre-commit .git/hooks/pre-commit)
+
+TRACKED="main.py README.md laptop_sync.yaml pyproject.toml doc/"
+AGENT_DOC="AGENTS.md"
+
+# Check if any tracked source is staged
+source_staged=0
+for item in $TRACKED; do
+    if git diff --cached --name-only | grep -q "^${item}"; then
+        source_staged=1
+        break
+    fi
+done
+
+# If source changed but AGENTS.md is not staged, warn
+if [ "$source_staged" -eq 1 ]; then
+    if ! git diff --cached --name-only | grep -q "^${AGENT_DOC}$"; then
+        echo ""
+        echo "WARNING: Source files changed but AGENTS.md is not staged."
+        echo "  Update AGENTS.md to reflect your changes, then: git add AGENTS.md"
+        echo "  To skip this check: git commit --no-verify"
+        echo ""
+        exit 1
+    fi
+fi
+
+exit 0

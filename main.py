@@ -19,6 +19,36 @@ DEFAULT_CONFIG = "laptop_sync.yaml"
 _CONTROL_PATH = "~/.ssh/laptop-sync-%C"
 _CAN_MULTIPLEX = sys.platform != "win32"
 _verbose = False
+# Windows CreateProcess caps the command line at 32,767 chars. Stay well under.
+_WIN_CMDLINE_LIMIT = 30_000
+
+
+def _scp_batches(fixed_args: list[str], file_args: list[str], dest_arg: str) -> list[list[str]]:
+    """Split file_args into batches so each scp command stays under _WIN_CMDLINE_LIMIT.
+
+    fixed_args: the scp prefix args (scp, -p, port opts, etc.)
+    file_args:  the per-file source arguments
+    dest_arg:   the final destination argument (always appended)
+    On non-Windows there is no meaningful limit, so everything goes in one batch.
+    """
+    if sys.platform != "win32":
+        return [fixed_args + file_args + [dest_arg]]
+
+    overhead = sum(len(a) + 1 for a in fixed_args) + len(dest_arg) + 1
+    batches: list[list[str]] = []
+    current: list[str] = []
+    current_len = overhead
+    for arg in file_args:
+        arg_len = len(arg) + 1  # +1 for the space separator
+        if current and current_len + arg_len > _WIN_CMDLINE_LIMIT:
+            batches.append(fixed_args + current + [dest_arg])
+            current = []
+            current_len = overhead
+        current.append(arg)
+        current_len += arg_len
+    if current:
+        batches.append(fixed_args + current + [dest_arg])
+    return batches
 
 
 def debug(msg: str) -> None:
@@ -46,8 +76,8 @@ def _ssh_opts(port: int) -> list[str]:
 
 
 def _scp_opts(port: int) -> list[str]:
-    """SCP options with port and connection multiplexing."""
-    return ["-P", str(port)] + _multiplex_opts()
+    """SCP options with port, compression, and connection multiplexing."""
+    return ["-C", "-P", str(port)] + _multiplex_opts()
 
 
 def _scp_remote_path(host: str, path: str) -> str:
@@ -262,7 +292,7 @@ def compute_diff(
 def copy_files(
     source: Path, host: str, dest: str, port: int, files: list[str],
 ) -> None:
-    """Create remote directories and scp each changed file, preserving mtime."""
+    """Create remote directories and scp files in batches of _SCP_BATCH_SIZE, preserving mtime."""
     if not files:
         return
 
@@ -278,15 +308,24 @@ def copy_files(
         debug(f"Creating dirs batch {i // batch_size + 1}: {' '.join(cmd)}")
         subprocess.run(cmd, check=True)
 
+    # Group files by remote subdirectory — scp requires all sources in a batch
+    # to share the same destination directory.
+    by_dir: dict[str, list[str]] = {}
     for rel in files:
-        local_path = source / rel
-        remote_path = _scp_remote_path(host, posixpath.join(dest, rel))
-        console.print(f"  [cyan]copying[/cyan] {rel}")
-        cmd = ["scp", "-p", *_scp_opts(port), str(local_path), remote_path]
-        debug(f"scp cmd: {' '.join(cmd)}")
-        t0 = time.monotonic()
-        subprocess.run(cmd, check=True)
-        debug(f"scp completed in {time.monotonic() - t0:.3f}s")
+        by_dir.setdefault(posixpath.dirname(rel), []).append(rel)
+
+    for remote_subdir, dir_files in by_dir.items():
+        full_remote_dir = posixpath.join(dest, remote_subdir) if remote_subdir else dest
+        remote_dest_arg = _scp_remote_path(host, full_remote_dir)
+        for rel in dir_files:
+            console.print(f"  [cyan]copying[/cyan] {rel}")
+        fixed = ["scp", "-p", *_scp_opts(port)]
+        local_paths = [str(source / rel) for rel in dir_files]
+        for cmd in _scp_batches(fixed, local_paths, remote_dest_arg):
+            debug(f"scp push {len(cmd) - len(fixed) - 1} file(s): {' '.join(cmd)}")
+            t0 = time.monotonic()
+            subprocess.run(cmd, check=True)
+            debug(f"scp push completed in {time.monotonic() - t0:.3f}s")
 
 
 def delete_remote_files(
@@ -321,7 +360,7 @@ def pull_files(
     host: str, remote_source: str, port: int,
     local_dest: Path, files: list[str],
 ) -> None:
-    """SCP files from remote to local, preserving mtime."""
+    """SCP files from remote to local in batches of _SCP_BATCH_SIZE, preserving mtime."""
     if not files:
         return
 
@@ -331,15 +370,29 @@ def pull_files(
         local_dir = local_dest / d
         local_dir.mkdir(parents=True, exist_ok=True)
 
+    # Group files by remote subdirectory — scp requires all sources in a batch
+    # to share the same destination directory.
+    by_dir: dict[str, list[str]] = {}
     for rel in files:
-        remote_path = _scp_remote_path(host, posixpath.join(remote_source, rel))
-        local_path = local_dest / rel
-        console.print(f"  [cyan]pulling[/cyan] {rel}")
-        cmd = ["scp", "-p", *_scp_opts(port), remote_path, str(local_path)]
-        debug(f"scp pull cmd: {' '.join(cmd)}")
-        t0 = time.monotonic()
-        subprocess.run(cmd, check=True)
-        debug(f"scp pull completed in {time.monotonic() - t0:.3f}s")
+        by_dir.setdefault(posixpath.dirname(rel), []).append(rel)
+
+    for remote_subdir, dir_files in by_dir.items():
+        full_remote_dir = (
+            posixpath.join(remote_source, remote_subdir) if remote_subdir else remote_source
+        )
+        local_dir_path = local_dest / remote_subdir if remote_subdir else local_dest
+        for rel in dir_files:
+            console.print(f"  [cyan]pulling[/cyan] {rel}")
+        remote_paths = [
+            _scp_remote_path(host, posixpath.join(full_remote_dir, posixpath.basename(rel)))
+            for rel in dir_files
+        ]
+        fixed = ["scp", "-p", *_scp_opts(port)]
+        for cmd in _scp_batches(fixed, remote_paths, str(local_dir_path)):
+            debug(f"scp pull {len(cmd) - len(fixed) - 1} file(s): {' '.join(cmd)}")
+            t0 = time.monotonic()
+            subprocess.run(cmd, check=True)
+            debug(f"scp pull completed in {time.monotonic() - t0:.3f}s")
 
 
 def delete_local_files(local_dest: Path, files: list[str]) -> None:
