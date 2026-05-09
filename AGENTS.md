@@ -62,7 +62,7 @@ All logic lives in one file. Top-level symbols in order:
 | `compute_diff(source, dest, mtime_tolerance)` | fn | Returns `(to_copy, to_delete)`; uses mtime + size, never content hash |
 | `copy_files(source, host, dest, port, files)` | fn | Groups files by remote subdir; batched `ssh mkdir -p` (100/batch) then one `scp -p` call per subdir with all files |
 | `delete_remote_files(host, dest, port, files)` | fn | Batched `ssh rm -f` (100/batch) then `find … -empty -delete` |
-| `pull_files(host, remote_source, port, local_dest, files)` | fn | Groups files by remote subdir; creates local dirs then one `scp -p` call per subdir with all files |
+| `pull_files(host, remote_source, port, local_dest, files, snapshot)` | fn | Groups files by remote subdir; creates local dirs then one `scp -p` call per subdir with all files; sets mtimes via `os.utime()` from snapshot to survive Windows scp times errors |
 | `delete_local_files(local_dest, files)` | fn | `Path.unlink()` then bottom-up `rmdir` of empty dirs |
 | `mirror(...)` | Click command | Main entry: loads config, merges CLI overrides, runs push+pull loop |
 | `main()` | fn | Thin wrapper calling `mirror()` (entry point) |

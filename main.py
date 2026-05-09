@@ -359,8 +359,15 @@ def delete_remote_files(
 def pull_files(
     host: str, remote_source: str, port: int,
     local_dest: Path, files: list[str],
+    snapshot: dict[str, tuple[float, int]],
 ) -> None:
-    """SCP files from remote to local in batches of _SCP_BATCH_SIZE, preserving mtime."""
+    """SCP files from remote to local, preserving mtime.
+
+    mtime is set explicitly via os.utime() after each scp call because
+    OpenSSH for Windows sometimes fails to set local file times when using
+    scp -p, reporting 'local set times: Input/output error' and exiting
+    non-zero even though the file transferred correctly.
+    """
     if not files:
         return
 
@@ -391,8 +398,24 @@ def pull_files(
         for cmd in _scp_batches(fixed, remote_paths, str(local_dir_path)):
             debug(f"scp pull {len(cmd) - len(fixed) - 1} file(s): {' '.join(cmd)}")
             t0 = time.monotonic()
-            subprocess.run(cmd, check=True)
-            debug(f"scp pull completed in {time.monotonic() - t0:.3f}s")
+            result = subprocess.run(cmd)
+            elapsed = time.monotonic() - t0
+            debug(f"scp pull completed in {elapsed:.3f}s (rc={result.returncode})")
+            if result.returncode != 0:
+                debug("scp pull non-zero exit — likely a Windows 'set times' error; setting mtimes manually")
+
+        # Set mtimes explicitly from the snapshot so that mtime mismatches
+        # don't trigger re-copies next cycle, regardless of whether scp -p
+        # succeeded in setting them.
+        for rel in dir_files:
+            local_path = local_dest / rel
+            if local_path.exists() and rel in snapshot:
+                mtime, _ = snapshot[rel]
+                try:
+                    os.utime(local_path, (mtime, mtime))
+                    debug(f"utime set: {rel} -> {mtime}")
+                except OSError as e:
+                    debug(f"utime failed for {rel}: {e}")
 
 
 def delete_local_files(local_dest: Path, files: list[str]) -> None:
@@ -735,7 +758,7 @@ def mirror(
                             )
                             pull_files(
                                 remote_host, remote_pull_source, port,
-                                pull_dest_path, to_copy,
+                                pull_dest_path, to_copy, remote_snapshot,
                             )
                         if to_delete and not no_delete:
                             console.print(
